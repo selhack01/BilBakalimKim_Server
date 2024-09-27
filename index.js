@@ -1,6 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const r = require("rethinkdb");
+const jwt = require("jsonwebtoken");
+const { authenticateToken } = require("./middlewares");
+require("dotenv").config();
 
 const app = express();
 const PORT = 3001;
@@ -19,6 +22,20 @@ function connectToDatabase() {
     });
   });
 }
+
+const CreateToken = (userID) => {
+  return jwt.sign({ userID }, process.env.JWT_SECRET, {
+    expiresIn: "1d",
+  });
+};
+
+// app.get(`/validateToken/:idulaniste`, (req, res) => {
+//   const { idulaniste } = req.params;
+//   const authHeader = req.headers['authorization'];
+//   const token = authHeader && authHeader.split(' ')[1];
+
+//   return true;
+// });
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
@@ -46,8 +63,12 @@ app.post("/login", async (req, res) => {
         const userData = {
           username: user.username,
           highScores: user.highScores,
+          id: user.id,
         };
-        res.json({ user: userData });
+        res.json({
+          user: userData,
+          token: CreateToken(user.id),
+        });
       } else {
         res.status(401).json({ error: "Invalid password" });
       }
@@ -98,7 +119,7 @@ app.post("/register", async (req, res) => {
   }
 });
 
-app.get("/highscores", async (req, res) => {
+app.get("/highscores", authenticateToken ,async (req, res) => {
   try {
     const conn = await connectToDatabase();
     const cursor = await r.db("guesWho").table("users").run(conn);
@@ -123,7 +144,7 @@ app.get("/highscores", async (req, res) => {
   }
 });
 
-app.get("/highscores/:username", async (req, res) => {
+app.get("/highscores/:username",authenticateToken, async (req, res) => {
   const { username } = req.params;
 
   if (!username) {
@@ -173,10 +194,9 @@ app.get("/question", async (req, res) => {
   }
 });
 
-app.post("/updateScore/:username", async (req, res) => {
+app.post("/updateScore", authenticateToken, async (req, res) => {
   try {
-    const { score } = req.body;
-    const username = req.params.username;
+    const { score , userId } = req.body;
 
     if (!score || !Array.isArray(score)) {
       return res.status(400).json({ error: "Invalid or missing score" });
@@ -184,18 +204,16 @@ app.post("/updateScore/:username", async (req, res) => {
 
     const conn = await connectToDatabase();
 
+    // console.log(userId)
+
     const result = await r
       .db("guesWho")
       .table("users")
-      .filter({ username: username })
-      .update({ highScores: score })
+      .filter({ id: userId })
+      .update({ highScores: score }) 
       .run(conn);
 
     conn.close();
-
-    if (result.replaced === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
 
     res.status(200).json({ message: "Score updated successfully" });
   } catch (err) {
@@ -203,6 +221,7 @@ app.post("/updateScore/:username", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
